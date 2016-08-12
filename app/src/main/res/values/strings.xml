@@ -1,0 +1,35 @@
+<!--
+  ~ Copyright (C) 2016 Primed
+  ~
+  ~ This program is free software: you can redistribute it and/or modify
+  ~ it under the terms of the GNU General Public License as published by
+  ~ the Free Software Foundation, either version 3 of the License, or
+  ~ (at your option) any later version.
+  ~
+  ~ This program is distributed in the hope that it will be useful,
+  ~ but WITHOUT ANY WARRANTY; without even the implied warranty of
+  ~ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  ~ GNU General Public License for more details.
+  ~
+  ~ You should have received a copy of the GNU General Public License
+  ~ along with this program.  If not, see <http://www.gnu.org/licenses/>.
+  -->
+
+<resources>
+    <!-- This one is self-explanatory -->
+    <string name="app_name">Pokémaps</string>
+    <!-- Settings menu text -->
+    <string name="action_settings">Settings</string>
+    <!-- Strings used in activity_login layout. -->
+    <string name="login_help_text">Login using Pokémon Trainer Club credentials.</string>
+    <string name="username_hint_text">Username</string>
+    <string name="password_hint_text">Password</string>
+    <string name="login_button_text">Login</string>
+    <string name="sign_up_text">Don\'t have an account? Sign up here</string>
+    <string name="login_warning">This software uses Niantic\'s servers, but is in no way affiliated with Niantic Inc. or The Pokémon Company. It is HIGHLY recommended you do not use your main Pokémon Trainer Club account with this software. We are not responsible for any penalties or bans that may occur on your account.</string>
+    <!-- Strings used for preferences. -->
+    <string name="preference_file_key">4vX13L40X9wASznU9O5S2mWC39m8c3In</string>
+    <string name="warning_preference_key">3tGh8r1qhZ</string>
+    <string name="username_preference_key">4A1MtZE8p1</string>
+    <string name="password_preference_key">8M5fzdR27u</string>
+</resources>
