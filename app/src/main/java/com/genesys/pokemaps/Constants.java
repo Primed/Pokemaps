@@ -23,10 +23,12 @@ package com.genesys.pokemaps;
  * https://github.com/Primed/Pokemaps
  */
 
-class Constants {
+public class Constants {
 
+    // Enables debug actions through the app. Mostly things like debug logging.
     static final boolean DEBUG = true;
 
+    // Location settings
     static final int REQUEST_FINE_LOCATION_KEY = 0;
     static boolean locationEnabled = false;
 

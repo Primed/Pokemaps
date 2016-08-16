@@ -18,7 +18,7 @@
 package com.genesys.pokemaps;
 
 import android.content.Context;
-import android.content.DialogInterface;
+import android.graphics.Color;
 import android.support.v7.app.AlertDialog;
 import android.util.Log;
 
@@ -52,7 +52,7 @@ public class Utils {
     }
 
     /**
-     * Prints a log to the console only if debugging is enabled in com.grid.abacus.Constants.
+     * Prints a log to the console only if debugging is enabled in com.grid.pokemaps.Constants.
      *
      * @param context Always use 'this' for this parameter.
      * @param message The message to stream to console.
@@ -72,8 +72,26 @@ public class Utils {
      */
     public static void alert(Context context, String title, String message) {
         AlertDialog.Builder builder = new AlertDialog.Builder(context);
-        builder.setMessage(message).setTitle(title).setPositiveButton("OK", null);
+        builder.setMessage(message).setPositiveButton("OK", null);
+        if (title != null) {
+            builder.setTitle(title);
+        }
         AlertDialog dialog = builder.create();
         dialog.show();
+    }
+
+    /**
+     * Converts a solid color to a color with an alpha value.
+     *
+     * @param color Color value. (Color, not resource ID for that color)
+     * @param ratio Alpha ratio. (0-1)
+     * @return Color with specified alpha multiple.
+     */
+    public static int getColorWithAlpha(int color, float ratio) {
+        int alpha = Math.round(Color.alpha(color) * ratio);
+        int r = Color.red(color);
+        int g = Color.green(color);
+        int b = Color.blue(color);
+        return Color.argb(alpha, r, g, b);
     }
 }
