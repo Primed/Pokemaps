@@ -23,11 +23,11 @@ package com.genesys.pokemaps;
  * https://github.com/Primed/Pokemaps
  */
 
-public class Constants {
+class Constants {
 
-    public static final boolean DEBUG = true;
+    static final boolean DEBUG = true;
 
-    public static final int REQUEST_FINE_LOCATION_KEY = 0;
-    public static boolean locationEnabled = false;
+    static final int REQUEST_FINE_LOCATION_KEY = 0;
+    static boolean locationEnabled = false;
 
 }
