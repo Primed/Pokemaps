@@ -27,4 +27,7 @@ public class Constants {
 
     public static final boolean DEBUG = true;
 
+    public static final int REQUEST_FINE_LOCATION_KEY = 0;
+    public static boolean locationEnabled = false;
+
 }

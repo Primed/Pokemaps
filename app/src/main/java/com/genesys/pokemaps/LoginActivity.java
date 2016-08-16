@@ -17,21 +17,24 @@
 
 package com.genesys.pokemaps;
 
-import android.app.Dialog;
+import android.Manifest;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.AsyncTask;
+import android.os.Build;
 import android.os.Bundle;
+import android.os.Debug;
 import android.support.design.widget.CoordinatorLayout;
 import android.support.design.widget.Snackbar;
+import android.support.v4.app.ActivityCompat;
+import android.support.v4.content.ContextCompat;
 import android.support.v7.app.AlertDialog;
 import android.support.v7.app.AppCompatActivity;
 import android.view.View;
-import android.view.Menu;
-import android.view.MenuItem;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
@@ -43,6 +46,7 @@ import com.pokegoapi.api.PokemonGo;
 import com.pokegoapi.auth.PtcCredentialProvider;
 import com.pokegoapi.exceptions.LoginFailedException;
 import com.pokegoapi.exceptions.RemoteServerException;
+import com.pokegoapi.google.common.geometry.*;
 
 import java.util.concurrent.TimeUnit;
 
@@ -89,6 +93,24 @@ public class LoginActivity extends AppCompatActivity {
         // Get our preferences
         preferences = getSharedPreferences(getString(R.string.preference_file_key), Context.MODE_PRIVATE);
 
+        if (!preferences.getBoolean(getString(R.string.warning_preference_key), false)) {
+            new AlertDialog.Builder(this)
+                    .setTitle("Warning")
+                    .setMessage(getString(R.string.login_warning))
+                    .setPositiveButton("Got it", new DialogInterface.OnClickListener() {
+                        @Override
+                        public void onClick(DialogInterface dialogInterface, int i) {
+                            SharedPreferences.Editor editor = preferences.edit();
+                            editor.putBoolean(getString(R.string.warning_preference_key), true);
+                            editor.apply();
+                            checkForLocationPermission();
+                        }
+                    })
+                    .show();
+        } else {
+            checkForLocationPermission();
+        }
+
         // Launch MapActivity automatically if username and password are stored.
         final String usernameTemp = preferences.getString(getString(R.string.username_preference_key), null);
         final String passwordTemp = preferences.getString(getString(R.string.password_preference_key), null);
@@ -132,43 +154,25 @@ public class LoginActivity extends AppCompatActivity {
                 startActivity(signUpIntent);
             }
         });
-
-        if (!preferences.getBoolean(getString(R.string.warning_preference_key), false)) {
-            new AlertDialog.Builder(this)
-                    .setTitle("Warning")
-                    .setMessage(getString(R.string.login_warning))
-                    .setPositiveButton("Got it", new DialogInterface.OnClickListener() {
-                        @Override
-                        public void onClick(DialogInterface dialogInterface, int i) {
-                            SharedPreferences.Editor editor = preferences.edit();
-                            editor.putBoolean(getString(R.string.warning_preference_key), true);
-                            editor.apply();
-                        }
-                    })
-                    .show();
-        }
     }
 
     @Override
-    public boolean onCreateOptionsMenu(Menu menu) {
-        // Inflate the menu; this adds items to the action bar if it is present.
-        getMenuInflater().inflate(R.menu.menu_login, menu);
-        return true;
-    }
-
-    @Override
-    public boolean onOptionsItemSelected(MenuItem item) {
-        // Handle action bar item clicks here. The action bar will
-        // automatically handle clicks on the Home/Up button, so long
-        // as you specify a parent activity in AndroidManifest.xml.
-        int id = item.getItemId();
-
-        //noinspection SimplifiableIfStatement
-        if (id == R.id.action_settings) {
-            return true;
+    public void onRequestPermissionsResult(int requestCode,
+                                           String permissions[], int[] grantResults) {
+        switch (requestCode) {
+            case Constants.REQUEST_FINE_LOCATION_KEY: {
+                // If request is cancelled, the result arrays are empty.
+                if (grantResults.length > 0
+                        && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                    // Permission was granted, yay!
+                    Constants.locationEnabled = true;
+                } else {
+                    // Permission denied, lame.
+                    Constants.locationEnabled = false;
+                }
+                return;
+            }
         }
-
-        return super.onOptionsItemSelected(item);
     }
 
     /* Instance methods */
@@ -191,7 +195,7 @@ public class LoginActivity extends AppCompatActivity {
      * @param msg The message to be shown on the snackbar itself.
      */
     private void showRemoteServerError(String msg) {
-        Snackbar.make(loginViewGroup, "Login failed. Servers may be busy", Snackbar.LENGTH_LONG)
+        Snackbar.make(loginViewGroup, msg, Snackbar.LENGTH_LONG)
                 .setAction("status", new View.OnClickListener() {
                     @Override
                     public void onClick(View view) {
@@ -202,7 +206,45 @@ public class LoginActivity extends AppCompatActivity {
     }
 
     public void launchMapActivity() {
-        // TODO: Actually launch the MapActivity lol
+        // Start the new activity
+        Intent mapActivityIntent = new Intent(this, MapActivity.class);
+        startActivity(mapActivityIntent);
+        // Finish this activity so it's removed from the back stack
+        finish();
+    }
+
+    public void requestLocationPermission() {
+        ActivityCompat.requestPermissions(this,
+                new String[]{Manifest.permission.ACCESS_FINE_LOCATION},
+                Constants.REQUEST_FINE_LOCATION_KEY);
+    }
+
+    public void checkForLocationPermission() {
+        if (Build.VERSION.SDK_INT >= 23) {
+            // Here, thisActivity is the current activity
+            // This is where we check if GPS location access has been granted.
+            if (ContextCompat.checkSelfPermission(this,
+                    Manifest.permission.ACCESS_FINE_LOCATION)
+                    != PackageManager.PERMISSION_GRANTED) {
+                // Explanations are shown if the user declines the request once,
+                // and doesn't select "Don't ask again", and supports the permission.
+                if (ActivityCompat.shouldShowRequestPermissionRationale(this,
+                        Manifest.permission.ACCESS_FINE_LOCATION)) {
+                    new AlertDialog.Builder(this)
+                            .setTitle("Location")
+                            .setMessage(getString(R.string.app_name) + " needs permission to access GPS location. You can still use this app without it, but you won't have access to any location features.")
+                            .setPositiveButton("OK", new DialogInterface.OnClickListener() {
+                                @Override
+                                public void onClick(DialogInterface dialogInterface, int i) {
+                                    requestLocationPermission();
+                                }
+                            }).show();
+                } else {
+                    // No explanation needed, we can request the permission.
+                    requestLocationPermission();
+                }
+            }
+        }
     }
 
     public class LoginTask extends AsyncTask<String, Integer, Boolean> {

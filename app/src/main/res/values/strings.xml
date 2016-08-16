@@ -32,4 +32,6 @@
     <string name="warning_preference_key">3tGh8r1qhZ</string>
     <string name="username_preference_key">4A1MtZE8p1</string>
     <string name="password_preference_key">8M5fzdR27u</string>
+    <string name="title_activity_map">Map</string>
+    <string name="action_sign_out">Sign out</string>
 </resources>
