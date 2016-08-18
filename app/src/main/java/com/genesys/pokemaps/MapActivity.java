@@ -17,6 +17,7 @@
 
 package com.genesys.pokemaps;
 
+import android.annotation.SuppressLint;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
@@ -24,49 +25,93 @@ import android.content.pm.PackageManager;
 import android.location.Location;
 import android.os.Bundle;
 import android.support.annotation.NonNull;
-import android.support.annotation.Nullable;
 import android.support.design.widget.CoordinatorLayout;
-import android.support.design.widget.FloatingActionButton;
 import android.support.design.widget.Snackbar;
 import android.support.v4.app.ActivityCompat;
 import android.support.v7.app.AppCompatActivity;
 import android.support.v7.widget.Toolbar;
 import android.view.Menu;
 import android.view.MenuItem;
+import android.view.MotionEvent;
 import android.view.View;
 
 import com.google.android.gms.common.ConnectionResult;
 import com.google.android.gms.common.api.GoogleApiClient;
+import com.google.android.gms.common.api.GoogleApiClient.ConnectionCallbacks;
+import com.google.android.gms.common.api.GoogleApiClient.OnConnectionFailedListener;
+import com.google.android.gms.location.LocationListener;
+import com.google.android.gms.location.LocationRequest;
 import com.google.android.gms.location.LocationServices;
 import com.google.android.gms.maps.CameraUpdateFactory;
 import com.google.android.gms.maps.GoogleMap;
 import com.google.android.gms.maps.OnMapReadyCallback;
 import com.google.android.gms.maps.SupportMapFragment;
 import com.google.android.gms.maps.model.CameraPosition;
+import com.google.android.gms.maps.model.Circle;
 import com.google.android.gms.maps.model.CircleOptions;
 import com.google.android.gms.maps.model.LatLng;
 import com.pokegoapi.api.PokemonGo;
+import com.pokegoapi.api.gym.Gym;
+import com.pokegoapi.api.map.fort.Pokestop;
+import com.pokegoapi.api.map.fort.PokestopLootResult;
+import com.pokegoapi.api.map.pokemon.CatchResult;
+import com.pokegoapi.api.map.pokemon.CatchablePokemon;
+import com.pokegoapi.api.map.pokemon.NearbyPokemon;
+import com.pokegoapi.api.map.pokemon.encounter.EncounterResult;
 import com.pokegoapi.auth.PtcCredentialProvider;
 import com.pokegoapi.exceptions.LoginFailedException;
+import com.pokegoapi.exceptions.NoSuchItemException;
 import com.pokegoapi.exceptions.RemoteServerException;
 
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.List;
+import java.util.Timer;
+import java.util.TimerTask;
+
+import POGOProtos.Inventory.Item.ItemIdOuterClass;
+import POGOProtos.Networking.Responses.CatchPokemonResponseOuterClass;
 import okhttp3.OkHttpClient;
 
 public class MapActivity extends AppCompatActivity implements
-        GoogleApiClient.ConnectionCallbacks, OnMapReadyCallback, GoogleApiClient.OnConnectionFailedListener {
+        ConnectionCallbacks,
+        OnMapReadyCallback,
+        LocationListener,
+        OnConnectionFailedListener {
+
+    // Time in milliseconds between location updates.
+    private static final long LOCATION_INTERVAL = 2000;
+
+    // Minimum time in milliseconds between location updates.
+    private static final long MIN_LOCATION_INTERVAL = 1000;
+
+    // Radius in which our current position can access things in meters
+    // This is defined by the Pokemon GO settings; this is simply
+    // for the on-screen indicator.
+    private static final long SCAN_RADIUS = 70;
+    private static final int DEFAULT_ZOOM = 17;
+
+    // The rate at which game components update in milliseconds.
+    private static final long GAME_REFRESH_RATE = 3000;
 
     // MapActivity views
-    private GoogleMap mMap;
+    protected GoogleMap mMap;
     private CoordinatorLayout mapViewGroup;
-    private FloatingActionButton scanFab;
+    private View overlay;
 
     // Google Play Service components
-    GoogleApiClient googleApiClient;
-    Location lastLocation;
+    private GoogleApiClient googleApiClient;
+
+    // Location components
+    protected LocationRequest locationRequest;
+    private Location location;
+    private LatLng position;
+    private Circle scanCircle;
+    private boolean followUserLocation = true;
 
     // Pokemon Go components
-    OkHttpClient http;
-    PokemonGo go;
+    protected OkHttpClient http;
+    protected PokemonGo go;
 
     // Preference objects
     private SharedPreferences preferences;
@@ -84,10 +129,24 @@ public class MapActivity extends AppCompatActivity implements
 
         // @layout/activity_map views.
         mapViewGroup = (CoordinatorLayout) findViewById(R.id.map_viewgroup);
-        scanFab = (FloatingActionButton) findViewById(R.id.scan_fab);
+        overlay = findViewById(R.id.overlay);
+
+        overlay.setOnTouchListener(new View.OnTouchListener() {
+            @Override
+            public boolean onTouch(View view, MotionEvent motionEvent) {
+                followUserLocation = false;
+                mMap.getUiSettings().setMyLocationButtonEnabled(true);
+                return false;
+            }
+        });
 
         // Get our preferences.
         preferences = getSharedPreferences(getString(R.string.preference_file_key), Context.MODE_PRIVATE);
+
+        // Obtain the SupportMapFragment and get notified when the map is ready to be used.
+        SupportMapFragment mapFragment = (SupportMapFragment) getSupportFragmentManager()
+                .findFragmentById(R.id.map);
+        mapFragment.getMapAsync(this);
 
         // Create an instance of GoogleAPIClient.
         if (googleApiClient == null) {
@@ -98,22 +157,8 @@ public class MapActivity extends AppCompatActivity implements
                     .build();
         }
 
-        // Set our scan floating action bar click action.
-        // In this case, scan for Pokemon. Duh.
-        scanFab.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                // TODO: Implement Pokemon scanning
-            }
-        });
-
         // Login. Nothing much here.
         new Thread(new LoginThread()).start();
-
-        // Obtain the SupportMapFragment and get notified when the map is ready to be used.
-        SupportMapFragment mapFragment = (SupportMapFragment) getSupportFragmentManager()
-                .findFragmentById(R.id.map);
-        mapFragment.getMapAsync(this);
     }
 
 
@@ -134,16 +179,30 @@ public class MapActivity extends AppCompatActivity implements
         if (ActivityCompat.checkSelfPermission(this, android.Manifest.permission.ACCESS_FINE_LOCATION)
                 == PackageManager.PERMISSION_GRANTED) {
             mMap.setMyLocationEnabled(true);
+            mMap.setOnMyLocationButtonClickListener(new GoogleMap.OnMyLocationButtonClickListener() {
+                @Override
+                public boolean onMyLocationButtonClick() {
+                    followUserLocation = true;
+                    mMap.getUiSettings().setMyLocationButtonEnabled(false);
+                    mMap.animateCamera(CameraUpdateFactory.newCameraPosition(
+                            new CameraPosition.Builder(mMap.getCameraPosition())
+                                    .target(position)
+                                    .zoom(DEFAULT_ZOOM)
+                                    .build()));
+                    return true;
+                }
+            });
         }
     }
 
     @Override
     public boolean onCreateOptionsMenu(Menu menu) {
         // Inflate the menu; this adds items to the action bar if it is present.
-        getMenuInflater().inflate(R.menu.menu_login, menu);
+        getMenuInflater().inflate(R.menu.menu_map, menu);
         return true;
     }
 
+    @SuppressLint("CommitPrefEdits")
     @Override
     public boolean onOptionsItemSelected(MenuItem item) {
         // Handle action bar item clicks here. The action bar will
@@ -167,67 +226,154 @@ public class MapActivity extends AppCompatActivity implements
         return super.onOptionsItemSelected(item);
     }
 
-    /**
-     * This method is run when the app is connected to Google Play Services.
-     *
-     * @param bundle Google arguments.
-     */
     @Override
-    public void onConnected(@Nullable Bundle bundle) {
-        if (ActivityCompat.checkSelfPermission(this, android.Manifest.permission.ACCESS_FINE_LOCATION)
-                == PackageManager.PERMISSION_GRANTED) {
-            lastLocation = LocationServices.FusedLocationApi.getLastLocation(
-                    googleApiClient);
-            if (lastLocation != null) {
-                showSnackBar("Location found");
-                mMap.animateCamera(CameraUpdateFactory.newLatLngZoom(new LatLng(lastLocation.getLatitude(),
-                        lastLocation.getLongitude()), 13));
-                // Sets the center of the map to location user
-                CameraPosition cameraPosition = new CameraPosition.Builder()
-                        .target(new LatLng(lastLocation.getLatitude(), lastLocation.getLongitude()))
-                        .zoom(15)                   // Sets the zoom
-                        .build();                   // Creates a CameraPosition from the builder
-                mMap.animateCamera(CameraUpdateFactory.newCameraPosition(cameraPosition));
+    public void onStart() {
+        googleApiClient.connect();
+        Utils.debug(this, "Google Play Services connected");
+        super.onStart();
+    }
 
-                mMap.addCircle(new CircleOptions()
-                        .strokeColor(getResources().getColor(R.color.colorPrimary))
-                        .fillColor(Utils.getColorWithAlpha(getResources().getColor(R.color.colorPrimary), 0.3f))
-                        .strokeWidth(3)
-                        .visible(true)
-                        .radius(70)
-                        .center(new LatLng(lastLocation.getLatitude(),
-                                lastLocation.getLongitude())));
-                // If we're logged into Pokemon Go, update our player's location.
-                if (go != null) {
-                    go.setLocation(lastLocation.getLatitude(),
-                            lastLocation.getLongitude(),
-                            lastLocation.getAltitude());
-                }
-            }
-        }
+    @Override
+    public void onStop() {
+        googleApiClient.disconnect();
+        Utils.debug(this, "Google Play Services disconnected");
+        super.onStop();
     }
 
     @Override
     public void onConnectionSuspended(int i) {
-
+        Utils.debug(this, "Connection suspended");
     }
 
     @Override
     public void onConnectionFailed(@NonNull ConnectionResult connectionResult) {
-
+        Utils.debug(this, "Connection failed");
     }
 
-    /* Instance methods */
+    @Override
+    public void onConnected(Bundle bundle) {
+        // Create a new LocationRequest to update our location based on our specified intervals.
+        // TODO: Create a battery saver option that changes accuracy level and refresh rate.
+        locationRequest = LocationRequest.create()
+                .setInterval(LOCATION_INTERVAL)
+                .setFastestInterval(MIN_LOCATION_INTERVAL)
+                .setPriority(LocationRequest.PRIORITY_HIGH_ACCURACY);
 
-    protected void onStart() {
-        googleApiClient.connect();
-        super.onStart();
-        showSnackBar("Google Services connected");
+        if (ActivityCompat.checkSelfPermission(this, android.Manifest.permission.ACCESS_FINE_LOCATION)
+                == PackageManager.PERMISSION_GRANTED) {
+            // This statement starts our location updater. Nice.
+            LocationServices.FusedLocationApi.requestLocationUpdates(googleApiClient, locationRequest, this);
+
+            // Get our first location.
+            location = LocationServices.FusedLocationApi.getLastLocation(googleApiClient);
+            // Convert it to a latitude/longitude coordinate
+            position = new LatLng(location.getLatitude(), location.getLongitude());
+            // Now that Google Play Services are connected, we might as well zoom to our location
+            // for the first time.
+            mMap.animateCamera(CameraUpdateFactory.newCameraPosition(
+                    new CameraPosition.Builder()
+                            .target(position)
+                            .zoom(DEFAULT_ZOOM)
+                            .build()));
+            // Also, let's add a little circle scan thing. I don't know what else to call it.
+            // It's a circle that shows how far out the scan goes, so henceforth it will be known
+            // as circle scan thing.
+            scanCircle = mMap.addCircle(new CircleOptions()
+                    .center(position)
+                    .radius(SCAN_RADIUS)
+                    .strokeWidth(4)
+                    .strokeColor(getResources().getColor(R.color.colorPrimary))
+                    .fillColor(Utils.getColorWithAlpha(getResources().getColor(R.color.colorPrimary), 0.3f)));
+            // Lastly, since we follow the user by default, we can get rid of the
+            // 'center location' button.
+            mMap.getUiSettings().setMyLocationButtonEnabled(false);
+        }
     }
 
-    protected void onStop() {
-        googleApiClient.disconnect();
-        super.onStop();
+    @Override
+    public void onLocationChanged(Location location) {
+        Utils.debug(this, "Location updated.");
+
+        this.location = location;
+        position = new LatLng(location.getLatitude(), location.getLongitude());
+
+        updateScanCircle();
+        if (followUserLocation) {
+            updateCameraLocation();
+        }
+    }
+
+    public void updateScanCircle() {
+        scanCircle.setCenter(position);
+    }
+
+    public void updateCameraLocation() {
+        mMap.animateCamera(CameraUpdateFactory.newCameraPosition(
+                new CameraPosition.Builder(mMap.getCameraPosition())
+                        .target(position)
+                        .zoom(DEFAULT_ZOOM)
+                        .build()));
+    }
+
+    public void updateWorld() {
+        if (go != null) {
+            go.setLocation(position.latitude, position.longitude, location.getAltitude());
+
+            try {
+                List<NearbyPokemon> nearbyPokemon = go.getMap().getNearbyPokemon();
+                Utils.debug(this, "There are " + nearbyPokemon.size() + " pokemon nearby.");
+                for (NearbyPokemon pokemon : nearbyPokemon) {
+                    Utils.debug(this, "There is a " + pokemon.getPokemonId().name() + " nearby.");
+                }
+
+                List<CatchablePokemon> catchablePokemon = go.getMap().getCatchablePokemon();
+                Utils.debug(this, "There are " + catchablePokemon.size() + " catchable pokemon nearby.");
+                for (CatchablePokemon pokemon : catchablePokemon) {
+                    Utils.debug(this, "There is a " + pokemon.getPokemonId().name() + " at "
+                            + pokemon.getLatitude() + ", " + pokemon.getLongitude() + ". It expires" +
+                            " in " + pokemon.getExpirationTimestampMs() / 1000 + " seconds.");
+                    EncounterResult encResult = pokemon.encounterPokemon();
+                    // If the encounter was successful, catch it!
+                    if (encResult.wasSuccessful()) {
+                        double captureProbability = encResult.getCaptureProbability().getCaptureProbability(0);
+                        Utils.debug(this, "Catching " + pokemon.getPokemonId() +
+                                ". Capture probability: " + captureProbability);
+
+                        // TODO: Create a setting that allows for more pokeballs and razz berries to be used with rarer pokemon
+                        CatchResult result = pokemon.catchPokemonBestBallToUse(encResult, new ArrayList<ItemIdOuterClass.ItemId>(), -1, 3);
+                        if (result.getStatus() == CatchPokemonResponseOuterClass.CatchPokemonResponse.CatchStatus.CATCH_SUCCESS) {
+                            // Success!
+                            showSnackBar(pokemon.getPokemonId() + " captured");
+                            Utils.debug(this, "Capture success! Throw accuracy: " + (1 - result.getMissPercent()));
+                        } else if (result.getStatus() == CatchPokemonResponseOuterClass.CatchPokemonResponse.CatchStatus.CATCH_FLEE) {
+                            showSnackBar("Pokemon fled");
+                        }
+                    }
+                }
+
+                List<Gym> gyms = go.getMap().getGyms();
+                Utils.debug(this, "There are " + gyms.size() + " gyms nearby.");
+
+                Collection<Pokestop> pokestops = go.getMap().getMapObjects().getPokestops();
+                for (Pokestop pokestop : pokestops) {
+                    if (pokestop.canLoot() && pokestop.inRange()) {
+                        Utils.debug(this, "Attempting to loot pokestop...");
+                        PokestopLootResult lootResult = pokestop.loot();
+                        if (lootResult.wasSuccessful()) {
+                            showSnackBar("Loot successful! Earned " + lootResult.getExperience() + " XP");
+                            Utils.debug(this, "Loot successful! Earned " + lootResult.getExperience()
+                                    + " XP, and " + lootResult.getItemsAwarded().size() + " items.");
+                        } else {
+                            Utils.debug(this, "Loot was unsuccessful.");
+                        }
+                    } else {
+                        Utils.debug(this, "Pokestop found and is " + pokestop.getDistance() + " meters away.");
+                    }
+                }
+            } catch (LoginFailedException | RemoteServerException | NoSuchItemException e) {
+                e.printStackTrace();
+            }
+        }
     }
 
     public void showSnackBar(String msg) {
@@ -251,23 +397,31 @@ public class MapActivity extends AppCompatActivity implements
                 go = new PokemonGo(new PtcCredentialProvider(http, username, password), http);
                 if (go.getAuthInfo().isInitialized()) {
                     // Success!
-                    Snackbar.make(mapViewGroup, "Login successful!", Snackbar.LENGTH_LONG).show();
+                    showSnackBar("Login successful");
+
+                    // Start a new thread that loops every 3 seconds.
+                    new Timer().schedule(new TimerTask() {
+                        @Override
+                        public void run() {
+                            updateWorld();
+                        }
+                    }, 0, GAME_REFRESH_RATE);
                 }
             } catch (LoginFailedException e) {
                 // If the login failed because of invalid credentials, display a Snackbar.
-                Snackbar.make(mapViewGroup, "Incorrect username or password", Snackbar.LENGTH_LONG).show();
+                showSnackBar("Incorrect username or password");
                 return;
             } catch (RemoteServerException e) {
                 // Also show a snackbar if the server is busy. Indicate retrying status.
-                Snackbar.make(mapViewGroup, "Failed to connect. Retrying...", Snackbar.LENGTH_LONG).show();
+                showSnackBar("Failed to connect. Retrying...");
                 return;
             }
 
             // If our location is available, update our Pokemon Go player's location.
-            if (lastLocation != null) {
-                go.setLocation(lastLocation.getLatitude(),
-                        lastLocation.getLongitude(),
-                        lastLocation.getAltitude());
+            if (location != null) {
+                go.setLocation(location.getLatitude(),
+                        location.getLongitude(),
+                        location.getAltitude());
             }
         }
     }

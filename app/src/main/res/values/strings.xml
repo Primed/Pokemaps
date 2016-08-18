@@ -34,4 +34,5 @@
     <string name="password_preference_key">8M5fzdR27u</string>
     <string name="title_activity_map">Map</string>
     <string name="action_sign_out">Sign out</string>
+    <string name="action_player_info">Player info</string>
 </resources>

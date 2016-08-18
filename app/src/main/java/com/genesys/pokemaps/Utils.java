@@ -20,7 +20,9 @@ package com.genesys.pokemaps;
 import android.content.Context;
 import android.graphics.Color;
 import android.support.v7.app.AlertDialog;
+import android.util.DisplayMetrics;
 import android.util.Log;
+import android.util.TypedValue;
 
 /**
  * Hand crafted by Primed with love for the Pokemaps project.
@@ -93,5 +95,17 @@ public class Utils {
         int g = Color.green(color);
         int b = Color.blue(color);
         return Color.argb(alpha, r, g, b);
+    }
+
+    /**
+     * Converts density pixels to pixels.
+     *
+     * @param context Activity context.
+     * @param dipValue Amount of dp to convert to px
+     * @return Converted pixels
+     */
+    public static int dipToPixels(Context context, int dipValue) {
+        DisplayMetrics metrics = context.getResources().getDisplayMetrics();
+        return (int) TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, dipValue, metrics);
     }
 }

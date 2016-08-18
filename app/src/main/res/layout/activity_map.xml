@@ -51,6 +51,10 @@
 
     </LinearLayout>
 
+    <View android:id="@+id/overlay"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
     <android.support.design.widget.FloatingActionButton
         android:id="@+id/scan_fab"
         android:layout_width="wrap_content"

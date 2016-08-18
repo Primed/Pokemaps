@@ -3,13 +3,18 @@
     xmlns:tools="http://schemas.android.com/tools"
     tools:context="com.genesys.pokemaps.LoginActivity">
     <item
-        android:id="@+id/action_settings"
+        android:id="@+id/action_player_info"
         android:orderInCategory="1"
-        android:title="@string/action_settings"
+        android:title="@string/action_player_info"
         app:showAsAction="never" />
     <item
         android:id="@+id/action_sign_out"
         android:orderInCategory="2"
         android:title="@string/action_sign_out"
+        app:showAsAction="never" />
+    <item
+        android:id="@+id/action_settings"
+        android:orderInCategory="3"
+        android:title="@string/action_settings"
         app:showAsAction="never" />
 </menu>
