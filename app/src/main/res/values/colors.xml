@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!-- Theme settings -->
     <color name="colorPrimary">#2196F3</color>
     <color name="colorPrimaryDark">#1976D2</color>
     <color name="colorPrimaryLight">#BBDEFB</color>
@@ -8,4 +9,15 @@
     <color name="textSecondary">#757575</color>
     <color name="iconColor">#FFFFFF</color>
     <color name="dividerColor">#BDBDBD</color>
+    <color name="secondaryFabColor">#ffffff</color>
+
+    <!-- Pokemon rarity colors -->
+    <color name="veryCommonColor">#4a148c</color>
+    <color name="commonColor">#311b92</color>
+    <color name="uncommonColor">#039be5</color>
+    <color name="rareColor">#00c853</color>
+    <color name="veryRareColor">#c6ff00</color>
+    <color name="epicColor">#ffc400</color>
+    <color name="legendaryColor">#ff6d00</color>
+    <color name="mythicColor">#d50000</color>
 </resources>

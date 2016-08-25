@@ -19,10 +19,15 @@ package com.genesys.pokemaps;
 
 import android.content.Context;
 import android.graphics.Color;
+import android.os.Build;
+import android.os.Vibrator;
 import android.support.v7.app.AlertDialog;
-import android.util.DisplayMetrics;
 import android.util.Log;
-import android.util.TypedValue;
+
+import com.pokegoapi.api.pokemon.Pokemon;
+import com.pokegoapi.util.PokeDictionary;
+
+import java.util.Locale;
 
 /**
  * Hand crafted by Primed with love for the Pokemaps project.
@@ -91,21 +96,49 @@ public class Utils {
      */
     public static int getColorWithAlpha(int color, float ratio) {
         int alpha = Math.round(Color.alpha(color) * ratio);
-        int r = Color.red(color);
-        int g = Color.green(color);
-        int b = Color.blue(color);
-        return Color.argb(alpha, r, g, b);
+        int red = Color.red(color);
+        int green = Color.green(color);
+        int blue = Color.blue(color);
+        return Color.argb(alpha, red, green, blue);
     }
 
     /**
-     * Converts density pixels to pixels.
+     * Gets the English name of the specified Pokemon object.
+     *
+     * @param pokemon The Pokemon to identify.
+     * @return The name of the Pokemon.
+     */
+    public static String getPokemonName(Pokemon pokemon) {
+        return getPokemonName(pokemon.getPokemonId().getNumber());
+    }
+
+    /**
+     * Gets the English name of the specified Pokemon from its ID.
+     *
+     * @param id The Pokedex number of the Pokemon you'd like to identify.
+     * @return The name of the Pokemon.
+     */
+    public static String getPokemonName(int id) {
+        return PokeDictionary.getDisplayName(id, Locale.ENGLISH);
+    }
+
+    /**
+     * Gets the color using the relevant APIs for the current version.
      *
      * @param context Activity context.
-     * @param dipValue Amount of dp to convert to px
-     * @return Converted pixels
+     * @param id Color resource ID.
+     * @return The generated color.
      */
-    public static int dipToPixels(Context context, int dipValue) {
-        DisplayMetrics metrics = context.getResources().getDisplayMetrics();
-        return (int) TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, dipValue, metrics);
+    public static int getColor(Context context, int id) {
+        if (Build.VERSION.SDK_INT > Build.VERSION_CODES.M) {
+            return context.getColor(id);
+        }
+        return context.getResources().getColor(id, context.getTheme());
+    }
+
+    public static void vibrate(long[] pattern, Vibrator vibrator) {
+        if (vibrator.hasVibrator()) {
+            vibrator.vibrate(pattern, -1);
+        }
     }
 }

@@ -32,4 +32,6 @@ public class Constants {
     static final int REQUEST_FINE_LOCATION_KEY = 0;
     static boolean locationEnabled = false;
 
+    static final long[] POKESTOP_VIBRATION_PATTERN = {0, 85, 100, 85};
+    static final long[] POKEMON_VIBRATION_PATTERN = {0, 100};
 }

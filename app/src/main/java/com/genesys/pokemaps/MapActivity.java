@@ -22,26 +22,27 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.graphics.Color;
 import android.location.Location;
 import android.os.Bundle;
-import android.support.annotation.NonNull;
+import android.os.Vibrator;
 import android.support.design.widget.CoordinatorLayout;
 import android.support.design.widget.Snackbar;
 import android.support.v4.app.ActivityCompat;
 import android.support.v7.app.AppCompatActivity;
 import android.support.v7.widget.Toolbar;
+import android.util.Log;
 import android.view.Menu;
 import android.view.MenuItem;
-import android.view.MotionEvent;
 import android.view.View;
+import android.view.ViewGroup;
+import android.widget.GridLayout;
+import android.widget.ImageView;
+import android.widget.TextView;
 
-import com.google.android.gms.common.ConnectionResult;
-import com.google.android.gms.common.api.GoogleApiClient;
-import com.google.android.gms.common.api.GoogleApiClient.ConnectionCallbacks;
-import com.google.android.gms.common.api.GoogleApiClient.OnConnectionFailedListener;
-import com.google.android.gms.location.LocationListener;
-import com.google.android.gms.location.LocationRequest;
-import com.google.android.gms.location.LocationServices;
+import com.genesys.pokemaps.helpers.GameManager;
+import com.genesys.pokemaps.helpers.LocationManager;
+import com.genesys.pokemaps.helpers.LocationManager.Listener;
 import com.google.android.gms.maps.CameraUpdateFactory;
 import com.google.android.gms.maps.GoogleMap;
 import com.google.android.gms.maps.OnMapReadyCallback;
@@ -50,151 +51,367 @@ import com.google.android.gms.maps.model.CameraPosition;
 import com.google.android.gms.maps.model.Circle;
 import com.google.android.gms.maps.model.CircleOptions;
 import com.google.android.gms.maps.model.LatLng;
-import com.pokegoapi.api.PokemonGo;
-import com.pokegoapi.api.gym.Gym;
-import com.pokegoapi.api.map.fort.Pokestop;
 import com.pokegoapi.api.map.fort.PokestopLootResult;
-import com.pokegoapi.api.map.pokemon.CatchResult;
-import com.pokegoapi.api.map.pokemon.CatchablePokemon;
 import com.pokegoapi.api.map.pokemon.NearbyPokemon;
-import com.pokegoapi.api.map.pokemon.encounter.EncounterResult;
-import com.pokegoapi.auth.PtcCredentialProvider;
+import com.pokegoapi.api.pokemon.PokemonMetaRegistry;
+import com.pokegoapi.exceptions.AsyncPokemonGoException;
 import com.pokegoapi.exceptions.LoginFailedException;
 import com.pokegoapi.exceptions.NoSuchItemException;
 import com.pokegoapi.exceptions.RemoteServerException;
+import com.pokegoapi.util.PokeDictionary;
 
-import java.util.ArrayList;
-import java.util.Collection;
 import java.util.List;
+import java.util.Locale;
 import java.util.Timer;
 import java.util.TimerTask;
 
-import POGOProtos.Inventory.Item.ItemIdOuterClass;
-import POGOProtos.Networking.Responses.CatchPokemonResponseOuterClass;
-import okhttp3.OkHttpClient;
-
 public class MapActivity extends AppCompatActivity implements
-        ConnectionCallbacks,
         OnMapReadyCallback,
-        LocationListener,
-        OnConnectionFailedListener {
+        Listener,
+        GameManager.LoginListener {
 
-    // Time in milliseconds between location updates.
-    private static final long LOCATION_INTERVAL = 2000;
-
-    // Minimum time in milliseconds between location updates.
-    private static final long MIN_LOCATION_INTERVAL = 1000;
-
-    // Radius in which our current position can access things in meters
-    // This is defined by the Pokemon GO settings; this is simply
-    // for the on-screen indicator.
+    /**
+     * The name of this class for use in debugging purposes.
+     */
+    private static final String TAG = "MapActivity";
+    /**
+     * Radius in which our current position can access things in meters
+     * This is defined by the Pokemon GO settings; this is simply
+     * for the on-screen indicator.
+     */
     private static final long SCAN_RADIUS = 70;
+
+    /**
+     * The default level of zoom when the map initially launches. This is also the level of zoom
+     * the camera snaps to when the locate button is clicked.
+     */
     private static final int DEFAULT_ZOOM = 17;
 
-    // The rate at which game components update in milliseconds.
+    /**
+     * The rate at which game components update in milliseconds.
+     */
     private static final long GAME_REFRESH_RATE = 3000;
 
-    // MapActivity views
+    /**
+     * Our Google Map object. We can use this to manipulate various map options.
+     */
     protected GoogleMap mMap;
+
+    /**
+     * The level of zoom the map is currently set to.
+     */
+    private int currentZoom = DEFAULT_ZOOM;
+
+    /**
+     * Our Pokemon GO game manager. This object handles all the heavy stuff for us.
+     */
+    private GameManager gameManager;
+
+    /**
+     * This is the container for our MapActivity views. It's really only used for making
+     * SnackBars.
+     */
     private CoordinatorLayout mapViewGroup;
-    private View overlay;
 
-    // Google Play Service components
-    private GoogleApiClient googleApiClient;
+    /**
+     * This is the container for the nearby pokemon.
+     */
+    private GridLayout nearbyContainer;
 
-    // Location components
-    protected LocationRequest locationRequest;
+    /**
+     * The text that is displayed when no pokemon are nearby.
+     */
+    private TextView nearbyTextView;
+
+    /**
+     * Our location manager. It get our location for us and handles automatic location updates.
+     */
+    private LocationManager locationManager;
+
+    /**
+     * Our current location. Pretty self-explanatory.
+     */
     private Location location;
+
+    /**
+     * The same as the above mentioned location object, only converted to latiude and longitude.
+     */
     private LatLng position;
+
+    /**
+     * This object contains relevant data for a circle that is displayed on our map at our location.
+     * It indicates the radius in which our Pokemon GO character can interact with other elements.
+     */
     private Circle scanCircle;
-    private boolean followUserLocation = true;
 
-    // Pokemon Go components
-    protected OkHttpClient http;
-    protected PokemonGo go;
+    /**
+     * Stays true until the first time it's been accessed, the becomes false. This creates a branch
+     * that allows only a single passthrough.
+     */
+    private boolean firstLocationFlag = true;
 
-    // Preference objects
+    /**
+     * Our preferences object. Do I even have to explain this one?
+     */
     private SharedPreferences preferences;
+
+    /**
+     * Our System vibrator object.
+     */
+    private Vibrator vibrator;
 
     /* Overridden parent methods */
 
+    /**
+     * The first method that is called when this activity starts.
+     *
+     * @param savedInstanceState The instances that were saved on onStop().
+     */
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_map);
 
-        // Here's where we set up our toolbar and open it up to handle click responses.
+        // Here's where we set up our toolbar. This subsequently calls onCreateOptionsMenu().
         Toolbar toolbar = (Toolbar) findViewById(R.id.toolbar);
         setSupportActionBar(toolbar);
-
-        // @layout/activity_map views.
-        mapViewGroup = (CoordinatorLayout) findViewById(R.id.map_viewgroup);
-        overlay = findViewById(R.id.overlay);
-
-        overlay.setOnTouchListener(new View.OnTouchListener() {
-            @Override
-            public boolean onTouch(View view, MotionEvent motionEvent) {
-                followUserLocation = false;
-                mMap.getUiSettings().setMyLocationButtonEnabled(true);
-                return false;
-            }
-        });
-
-        // Get our preferences.
-        preferences = getSharedPreferences(getString(R.string.preference_file_key), Context.MODE_PRIVATE);
 
         // Obtain the SupportMapFragment and get notified when the map is ready to be used.
         SupportMapFragment mapFragment = (SupportMapFragment) getSupportFragmentManager()
                 .findFragmentById(R.id.map);
         mapFragment.getMapAsync(this);
 
-        // Create an instance of GoogleAPIClient.
-        if (googleApiClient == null) {
-            googleApiClient = new GoogleApiClient.Builder(this)
-                    .addConnectionCallbacks(this)
-                    .addOnConnectionFailedListener(this)
-                    .addApi(LocationServices.API)
-                    .build();
-        }
+        // Get our preferences.
+        preferences = getSharedPreferences(getString(R.string.preference_file_key), Context.MODE_PRIVATE);
 
-        // Login. Nothing much here.
-        new Thread(new LoginThread()).start();
+        // Set up our vibrator.
+        vibrator = (Vibrator) getSystemService(VIBRATOR_SERVICE);
+
+        setupGameManager();
+
+        // @layout/activity_map views.
+        mapViewGroup = (CoordinatorLayout) findViewById(R.id.map_viewgroup);
+        nearbyContainer = (GridLayout) findViewById(R.id.nearby_container);
+        nearbyTextView = (TextView) nearbyContainer.findViewById(R.id.no_nearby_text_view);
+
+        findViewById(R.id.plus_fab).setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                if (mMap != null) {
+                    mMap.animateCamera(CameraUpdateFactory.zoomIn());
+                }
+            }
+        });
+
+        findViewById(R.id.minus_fab).setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                if (mMap != null) {
+                    mMap.animateCamera(CameraUpdateFactory.zoomOut());
+                }
+                gameManager.farmXP();
+            }
+        });
+
+        setupLocationManager();
+
+        startPokemoonLoop();
     }
-
 
     /**
-     * Manipulates the map once available.
-     * This callback is triggered when the map is ready to be used.
-     * This is where we can add markers or lines, add listeners or move the camera. In this case,
-     * we just add a marker near Sydney, Australia.
-     * If Google Play services is not installed on the device, the user will be prompted to install
-     * it inside the SupportMapFragment. This method will only be triggered once the user has
-     * installed Google Play services and returned to the app.
+     * Gets our game manager instance and sets the login completed listener.
      */
-    @Override
-    public void onMapReady(GoogleMap googleMap) {
-        mMap = googleMap;
-
-        // Enable map location features such as the 'show location' button.
-        if (ActivityCompat.checkSelfPermission(this, android.Manifest.permission.ACCESS_FINE_LOCATION)
-                == PackageManager.PERMISSION_GRANTED) {
-            mMap.setMyLocationEnabled(true);
-            mMap.setOnMyLocationButtonClickListener(new GoogleMap.OnMyLocationButtonClickListener() {
-                @Override
-                public boolean onMyLocationButtonClick() {
-                    followUserLocation = true;
-                    mMap.getUiSettings().setMyLocationButtonEnabled(false);
-                    mMap.animateCamera(CameraUpdateFactory.newCameraPosition(
-                            new CameraPosition.Builder(mMap.getCameraPosition())
-                                    .target(position)
-                                    .zoom(DEFAULT_ZOOM)
-                                    .build()));
-                    return true;
-                }
-            });
-        }
+    private void setupGameManager() {
+        gameManager = GameManager.getInstance(this);
+        gameManager.setOnLoginCompletedListener(new GameManager.LoginListener() {
+            @Override
+            public void onLoginCompleted(GameManager.LoginResult loginResult) {
+                // TODO: Do something when login is completed.
+                Utils.debug(this, "Login completed on MapActivity.");
+            }
+        });
     }
 
+    /**
+     * Gets our location manager instance and registers this object as a listener.
+     */
+    private void setupLocationManager() {
+        locationManager = LocationManager.getInstance(this);
+        locationManager.register(this);
+    }
+
+    public void startPokemoonLoop() {
+        new Timer().schedule(new TimerTask() {
+            @Override
+            public void run() {
+                if (gameManager != null && (location != null)) {
+                    long startTime = System.currentTimeMillis();
+                    try {
+                        // Updates our game location to match our real location.
+                        gameManager.setPlayerLocation(location);
+
+                        // Update our pokestops and add a marker on our map at its location.
+                        // TODO: Add a map marker for pokestops.
+                        // gameManager.updatePokestops();
+
+                        // Cycles through our pokestops and loots them if the option is available.
+                        for (PokestopLootResult lootResult : gameManager.lootPokestops()) {
+                            switch (lootResult.getResult()) {
+                                case SUCCESS:
+                                    showSnackBar("Pokestop was successfully looted. Gained "
+                                            + lootResult.getExperience() + " XP");
+                                    Log.i(TAG, "Pokestop was successfully looted. Gained"
+                                            + lootResult.getExperience() + " XP and "
+                                            + lootResult.getItemsAwarded().size() + " items.");
+                                    Utils.vibrate(Constants.POKESTOP_VIBRATION_PATTERN, vibrator);
+                                    break;
+                                case INVENTORY_FULL:
+                                    String invMsg = "Inventory too full to loot Pokestop";
+                                    showSnackBar(invMsg);
+                                    Log.i(TAG, invMsg);
+                                    break;
+                                case IN_COOLDOWN_PERIOD:
+                                    String coolMsg = "Pokestop is currently in cooldown";
+                                    showSnackBar(coolMsg);
+                                    Log.i(TAG, coolMsg);
+                                    break;
+                                default:
+                                    String errMsg = "Couldn't loot pokestop due to error " + lootResult.getResult().name();
+                                    showSnackBar(errMsg);
+                                    Log.i(TAG, errMsg);
+                            }
+                        }
+
+                        final List<NearbyPokemon> nearbyPokemon = gameManager.getNearbyPokemon();
+                        runOnUiThread(new Runnable() {
+                            @Override
+                            public void run() {
+                                for (int i = 0; i < nearbyContainer.getChildCount(); i++) {
+                                    View child = nearbyContainer.getChildAt(i);
+                                    if (child.getId() != R.id.no_nearby_text_view && child.getParent() == nearbyContainer) {
+                                        nearbyContainer.removeViewAt(i--);
+                                    }
+                                }
+
+                                if (nearbyPokemon.size() > 0) {
+                                    // There are nearby Pokemon!
+                                    // Set our TextView visibility to gone.
+                                    nearbyTextView.setVisibility(View.GONE);
+                                    for (NearbyPokemon pokemon : nearbyPokemon) {
+                                        Log.i(TAG, pokemon.getPokemonId().name() + " is nearby.");
+
+                                        ViewGroup nearbyPokemonLayout = (ViewGroup) getLayoutInflater()
+                                                .inflate(R.layout.nearby_pokemon, null);
+
+                                        ImageView pokemonImage = (ImageView) nearbyPokemonLayout
+                                                .getChildAt(1);
+                                        ImageView pokemonBackground = (ImageView) nearbyPokemonLayout
+                                                .getChildAt(0);
+
+                                        int id = getResources().getIdentifier(pokemon.getPokemonId().name().toLowerCase(),
+                                                "drawable",
+                                                getPackageName());
+                                        pokemonImage.setImageResource(id);
+
+                                        int backgroundColor;
+                                        switch (PokemonMetaRegistry.getMeta(pokemon.getPokemonId()).getPokemonClass()) {
+                                            case VERY_COMMON:
+                                                backgroundColor = Utils.getColor(MapActivity.this, R.color.veryCommonColor);
+                                                break;
+                                            case COMMON:
+                                                backgroundColor = Utils.getColor(MapActivity.this, R.color.commonColor);
+                                                break;
+                                            case UNCOMMON:
+                                                backgroundColor = Utils.getColor(MapActivity.this, R.color.uncommonColor);
+                                                break;
+                                            case RARE:
+                                                backgroundColor = Utils.getColor(MapActivity.this, R.color.rareColor);
+                                                break;
+                                            case VERY_RARE:
+                                                backgroundColor = Utils.getColor(MapActivity.this, R.color.veryRareColor);
+                                                break;
+                                            case EPIC:
+                                                backgroundColor = Utils.getColor(MapActivity.this, R.color.epicColor);
+                                                break;
+                                            case LEGENDARY:
+                                                backgroundColor = Utils.getColor(MapActivity.this, R.color.legendaryColor);
+                                                break;
+                                            case MYTHIC:
+                                                backgroundColor = Utils.getColor(MapActivity.this, R.color.mythicColor);
+                                                break;
+                                            default:
+                                                backgroundColor = Color.WHITE;
+                                        }
+
+                                        pokemonBackground.setColorFilter(backgroundColor);
+
+                                        nearbyContainer.addView(nearbyPokemonLayout);
+                                    }
+                                } else {
+                                    nearbyTextView.setVisibility(View.VISIBLE);
+                                }
+                            }
+                        });
+
+                        // Update our pokemon and add a marker on the map at its location.
+                        // TODO: Add a map marker for catchable pokemon.
+                        //gameManager.updateCatchablePokemon();
+
+                        GameManager.Catch catchResult = gameManager.catchPokemon();
+                        if (catchResult != null) {
+                            String pokemon = PokeDictionary.getDisplayName(
+                                    catchResult.getCatchablePokemon().getPokemonId().getNumber(),
+                                    Locale.ENGLISH);
+                            String message;
+                            switch (catchResult.getCatchResult().getStatus()) {
+                                case CATCH_SUCCESS:
+                                    message = pokemon + " successfully captured";
+                                    Utils.vibrate(Constants.POKEMON_VIBRATION_PATTERN, vibrator);
+                                    break;
+                                case CATCH_FLEE:
+                                    message = pokemon + " fled";
+                                    break;
+                                case CATCH_MISSED:
+                                    message = pokemon + " missed";
+                                    break;
+                                default:
+                                    message = "Unable to catch " + pokemon;
+                            }
+                            showSnackBar(message);
+                            Log.i(TAG, message);
+                        }
+
+                        gameManager.updateGyms();
+
+                    } catch (LoginFailedException e) {
+                        showSnackBar("Login failed. Credentials changed");
+                    } catch (RemoteServerException e) {
+                        showSnackBar("Login failed. Servers may be down");
+                    } catch (NoSuchItemException e) {
+                        showSnackBar("Not enough pokeballs to catch pokemon");
+                    } catch (AsyncPokemonGoException e) {
+                        String username = preferences.getString(getString(R.string.username_preference_key), null);
+                        String password = preferences.getString(getString(R.string.password_preference_key), null);
+                        if (username != null || password != null) {
+                            gameManager.loginPTC(username, password);
+                        }
+                        e.printStackTrace();
+                    } catch (InterruptedException e) {
+                        e.printStackTrace();
+                    }
+                    double scanTimeSeconds = (double) (System.currentTimeMillis() - startTime) / 1000;
+                    Log.i(TAG, "World scanning completed in " + scanTimeSeconds + " seconds.");
+                }
+            }
+        }, 0, GAME_REFRESH_RATE);
+    }
+
+    /**
+     * This method inflates our options menu into our toolbar options menu from our menu xml.
+     *
+     * @param menu The menu to be inflated.
+     * @return Whether or not the menu was inflated successfully.
+     */
     @Override
     public boolean onCreateOptionsMenu(Menu menu) {
         // Inflate the menu; this adds items to the action bar if it is present.
@@ -202,6 +419,12 @@ public class MapActivity extends AppCompatActivity implements
         return true;
     }
 
+    /**
+     * This method handles options menu clicks. Any desired menu action should be defined here.
+     *
+     * @param item The menu item that was selected
+     * @return Whether or not action click was successful.
+     */
     @SuppressLint("CommitPrefEdits")
     @Override
     public boolean onOptionsItemSelected(MenuItem item) {
@@ -226,203 +449,132 @@ public class MapActivity extends AppCompatActivity implements
         return super.onOptionsItemSelected(item);
     }
 
+    /**
+     * Calls after onCreate(), when the Activity starts.
+     */
     @Override
     public void onStart() {
-        googleApiClient.connect();
-        Utils.debug(this, "Google Play Services connected");
+        locationManager.onStart();
         super.onStart();
     }
 
+    /**
+     * Calls when the activity
+     */
     @Override
     public void onStop() {
-        googleApiClient.disconnect();
-        Utils.debug(this, "Google Play Services disconnected");
+        locationManager.onStop();
         super.onStop();
     }
 
-    @Override
-    public void onConnectionSuspended(int i) {
-        Utils.debug(this, "Connection suspended");
-    }
+    /* Overridden methods from OnMapReadyCallback */
 
+    /**
+     * Manipulates the map once available.
+     * This callback is triggered when the map is ready to be used.
+     * If Google Play services is not installed on the device, the user will be prompted to install
+     * it inside the SupportMapFragment. This method will only be triggered once the user has
+     * installed Google Play services and returned to the app.
+     */
     @Override
-    public void onConnectionFailed(@NonNull ConnectionResult connectionResult) {
-        Utils.debug(this, "Connection failed");
-    }
+    public void onMapReady(GoogleMap googleMap) {
+        mMap = googleMap;
 
-    @Override
-    public void onConnected(Bundle bundle) {
-        // Create a new LocationRequest to update our location based on our specified intervals.
-        // TODO: Create a battery saver option that changes accuracy level and refresh rate.
-        locationRequest = LocationRequest.create()
-                .setInterval(LOCATION_INTERVAL)
-                .setFastestInterval(MIN_LOCATION_INTERVAL)
-                .setPriority(LocationRequest.PRIORITY_HIGH_ACCURACY);
-
+        // Enable map location features such as the 'show location' button.
         if (ActivityCompat.checkSelfPermission(this, android.Manifest.permission.ACCESS_FINE_LOCATION)
                 == PackageManager.PERMISSION_GRANTED) {
-            // This statement starts our location updater. Nice.
-            LocationServices.FusedLocationApi.requestLocationUpdates(googleApiClient, locationRequest, this);
-
-            // Get our first location.
-            location = LocationServices.FusedLocationApi.getLastLocation(googleApiClient);
-            // Convert it to a latitude/longitude coordinate
-            position = new LatLng(location.getLatitude(), location.getLongitude());
-            // Now that Google Play Services are connected, we might as well zoom to our location
-            // for the first time.
-            mMap.animateCamera(CameraUpdateFactory.newCameraPosition(
-                    new CameraPosition.Builder()
-                            .target(position)
-                            .zoom(DEFAULT_ZOOM)
-                            .build()));
-            // Also, let's add a little circle scan thing. I don't know what else to call it.
-            // It's a circle that shows how far out the scan goes, so henceforth it will be known
-            // as circle scan thing.
-            scanCircle = mMap.addCircle(new CircleOptions()
-                    .center(position)
-                    .radius(SCAN_RADIUS)
-                    .strokeWidth(4)
-                    .strokeColor(getResources().getColor(R.color.colorPrimary))
-                    .fillColor(Utils.getColorWithAlpha(getResources().getColor(R.color.colorPrimary), 0.3f)));
-            // Lastly, since we follow the user by default, we can get rid of the
-            // 'center location' button.
+            mMap.setMyLocationEnabled(true);
             mMap.getUiSettings().setMyLocationButtonEnabled(false);
         }
+
+        mMap.getUiSettings().setScrollGesturesEnabled(false);
+        mMap.getUiSettings().setZoomGesturesEnabled(false);
+        mMap.getUiSettings().setCompassEnabled(false);
     }
 
-    @Override
-    public void onLocationChanged(Location location) {
-        Utils.debug(this, "Location updated.");
-
-        this.location = location;
-        position = new LatLng(location.getLatitude(), location.getLongitude());
-
-        updateScanCircle();
-        if (followUserLocation) {
-            updateCameraLocation();
-        }
-    }
-
+    /**
+     * Updates our scan circle to match our location
+     */
     public void updateScanCircle() {
         scanCircle.setCenter(position);
     }
 
+    /**
+     * Updates the camera position to match our location
+     */
     public void updateCameraLocation() {
         mMap.animateCamera(CameraUpdateFactory.newCameraPosition(
                 new CameraPosition.Builder(mMap.getCameraPosition())
                         .target(position)
-                        .zoom(DEFAULT_ZOOM)
                         .build()));
     }
 
-    public void updateWorld() {
-        if (go != null) {
-            go.setLocation(position.latitude, position.longitude, location.getAltitude());
+    /**
+     * This method runs when the location is received for the first time.
+     */
+    public void setupCamera() {
+        // We might as well zoom to our location for the first time.
+        mMap.animateCamera(CameraUpdateFactory.newCameraPosition(
+                new CameraPosition.Builder(mMap.getCameraPosition())
+                        .target(position)
+                        .zoom(currentZoom)
+                        .tilt(30)
+                        .build()), 1, null);
 
-            try {
-                List<NearbyPokemon> nearbyPokemon = go.getMap().getNearbyPokemon();
-                Utils.debug(this, "There are " + nearbyPokemon.size() + " pokemon nearby.");
-                for (NearbyPokemon pokemon : nearbyPokemon) {
-                    Utils.debug(this, "There is a " + pokemon.getPokemonId().name() + " nearby.");
-                }
-
-                List<CatchablePokemon> catchablePokemon = go.getMap().getCatchablePokemon();
-                Utils.debug(this, "There are " + catchablePokemon.size() + " catchable pokemon nearby.");
-                for (CatchablePokemon pokemon : catchablePokemon) {
-                    Utils.debug(this, "There is a " + pokemon.getPokemonId().name() + " at "
-                            + pokemon.getLatitude() + ", " + pokemon.getLongitude() + ". It expires" +
-                            " in " + pokemon.getExpirationTimestampMs() / 1000 + " seconds.");
-                    EncounterResult encResult = pokemon.encounterPokemon();
-                    // If the encounter was successful, catch it!
-                    if (encResult.wasSuccessful()) {
-                        double captureProbability = encResult.getCaptureProbability().getCaptureProbability(0);
-                        Utils.debug(this, "Catching " + pokemon.getPokemonId() +
-                                ". Capture probability: " + captureProbability);
-
-                        // TODO: Create a setting that allows for more pokeballs and razz berries to be used with rarer pokemon
-                        CatchResult result = pokemon.catchPokemonBestBallToUse(encResult, new ArrayList<ItemIdOuterClass.ItemId>(), -1, 3);
-                        if (result.getStatus() == CatchPokemonResponseOuterClass.CatchPokemonResponse.CatchStatus.CATCH_SUCCESS) {
-                            // Success!
-                            showSnackBar(pokemon.getPokemonId() + " captured");
-                            Utils.debug(this, "Capture success! Throw accuracy: " + (1 - result.getMissPercent()));
-                        } else if (result.getStatus() == CatchPokemonResponseOuterClass.CatchPokemonResponse.CatchStatus.CATCH_FLEE) {
-                            showSnackBar("Pokemon fled");
-                        }
-                    }
-                }
-
-                List<Gym> gyms = go.getMap().getGyms();
-                Utils.debug(this, "There are " + gyms.size() + " gyms nearby.");
-
-                Collection<Pokestop> pokestops = go.getMap().getMapObjects().getPokestops();
-                for (Pokestop pokestop : pokestops) {
-                    if (pokestop.canLoot() && pokestop.inRange()) {
-                        Utils.debug(this, "Attempting to loot pokestop...");
-                        PokestopLootResult lootResult = pokestop.loot();
-                        if (lootResult.wasSuccessful()) {
-                            showSnackBar("Loot successful! Earned " + lootResult.getExperience() + " XP");
-                            Utils.debug(this, "Loot successful! Earned " + lootResult.getExperience()
-                                    + " XP, and " + lootResult.getItemsAwarded().size() + " items.");
-                        } else {
-                            Utils.debug(this, "Loot was unsuccessful.");
-                        }
-                    } else {
-                        Utils.debug(this, "Pokestop found and is " + pokestop.getDistance() + " meters away.");
-                    }
-                }
-            } catch (LoginFailedException | RemoteServerException | NoSuchItemException e) {
-                e.printStackTrace();
-            }
-        }
+        // Also, let's add a little circle scan thing. I don't know what else to call it.
+        // It's a circle that shows how far out the scan goes, so henceforth it will be known
+        // as circle scan thing.
+        scanCircle = mMap.addCircle(new CircleOptions()
+                .center(position)
+                .radius(SCAN_RADIUS)
+                .strokeWidth(4)
+                .strokeColor(Utils.getColor(this, R.color.colorPrimary))
+                .fillColor(Utils.getColorWithAlpha(Utils.getColor(this, R.color.colorPrimary), 0.3f)));
     }
 
+    /**
+     * Handy method that shows a snack bar.
+     *
+     * @param msg The message that is displayed in the snack bar.
+     */
     public void showSnackBar(String msg) {
         Snackbar.make(mapViewGroup, msg, Snackbar.LENGTH_LONG).show();
     }
 
-    private class LoginThread implements Runnable {
+    /**
+     * This method is called every time we receive a location update from our location manager.
+     *
+     * @param location Updated location.
+     */
+    @Override
+    public void onLocationChanged(Location location) {
+        // We can't do anything if the location is null, therefore we'll return.
+        if (location == null) return;
 
-        @Override
-        public void run() {
-            // Here we're basically doing the same thing we did in LoginActivity.
-            // I don't feel like rewriting all those witty comments so if you want
-            // more of my comedic genius just look back at LoginActivity.
+        // Update our location variables.
+        this.location = location;
+        position = new LatLng(location.getLatitude(), location.getLongitude());
 
-            String username = preferences.getString(getString(R.string.username_preference_key), null);
-            String password = preferences.getString(getString(R.string.password_preference_key), null);
-
-            http = new OkHttpClient.Builder().retryOnConnectionFailure(true).build();
-
-            try {
-                go = new PokemonGo(new PtcCredentialProvider(http, username, password), http);
-                if (go.getAuthInfo().isInitialized()) {
-                    // Success!
-                    showSnackBar("Login successful");
-
-                    // Start a new thread that loops every 3 seconds.
-                    new Timer().schedule(new TimerTask() {
-                        @Override
-                        public void run() {
-                            updateWorld();
-                        }
-                    }, 0, GAME_REFRESH_RATE);
-                }
-            } catch (LoginFailedException e) {
-                // If the login failed because of invalid credentials, display a Snackbar.
-                showSnackBar("Incorrect username or password");
-                return;
-            } catch (RemoteServerException e) {
-                // Also show a snackbar if the server is busy. Indicate retrying status.
-                showSnackBar("Failed to connect. Retrying...");
-                return;
-            }
-
-            // If our location is available, update our Pokemon Go player's location.
-            if (location != null) {
-                go.setLocation(location.getLatitude(),
-                        location.getLongitude(),
-                        location.getAltitude());
-            }
+        if (firstLocationFlag) {
+            // This is the first time we've gotten a location update. From here, we'll set up our
+            // map indicators.
+            setupCamera();
+            firstLocationFlag = false;
+        } else {
+            updateScanCircle();
+            updateCameraLocation();
         }
+
+        // Utils.debug(this, "Location updated! " + position.latitude + ", " + position.longitude);
+    }
+
+    /**
+     * This method is run whenever the user logs in from this method.
+     *
+     * @param loginResult The login result.
+     */
+    @Override
+    public void onLoginCompleted(GameManager.LoginResult loginResult) {
+        showSnackBar(loginResult.getMessage());
     }
 }

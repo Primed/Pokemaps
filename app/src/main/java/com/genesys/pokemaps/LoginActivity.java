@@ -24,7 +24,6 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.net.Uri;
-import android.os.AsyncTask;
 import android.os.Build;
 import android.os.Bundle;
 import android.support.annotation.NonNull;
@@ -41,15 +40,8 @@ import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.TextView;
 
+import com.genesys.pokemaps.helpers.GameManager;
 import com.google.firebase.analytics.FirebaseAnalytics;
-import com.pokegoapi.api.PokemonGo;
-import com.pokegoapi.auth.PtcCredentialProvider;
-import com.pokegoapi.exceptions.LoginFailedException;
-import com.pokegoapi.exceptions.RemoteServerException;
-
-import java.util.concurrent.TimeUnit;
-
-import okhttp3.OkHttpClient;
 
 /**
  * Hand crafted by Primed with love for the Pokemaps project.
@@ -57,26 +49,24 @@ import okhttp3.OkHttpClient;
  * https://github.com/Primed/Pokemaps
  */
 
-public class LoginActivity extends AppCompatActivity {
+public class LoginActivity extends AppCompatActivity implements GameManager.LoginListener {
 
     // @layout/activity_login.xml views.
     private CoordinatorLayout loginViewGroup;
     private LinearLayout loginContainer;
     private EditText usernameEditText;
     private EditText passwordEditText;
-    private Button loginButton;
-    private TextView signUpTextView;
+    protected Button loginButton;
+    protected TextView signUpTextView;
     private ProgressBar loginProgressBar;
 
     // Pokemon Go components
-    private OkHttpClient http;
-    private PokemonGo go;
+    private GameManager gameManager;
 
     // Firebase stuff
-    private FirebaseAnalytics mFirebaseAnalytics;
+    protected FirebaseAnalytics mFirebaseAnalytics;
 
     // Other objects
-    private LoginTask loginThread;
     private SharedPreferences preferences;
 
     /* Overridden parent methods */
@@ -91,6 +81,15 @@ public class LoginActivity extends AppCompatActivity {
 
         // Get our preferences
         preferences = getSharedPreferences(getString(R.string.preference_file_key), Context.MODE_PRIVATE);
+
+        // Get our views from our layout.
+        loginViewGroup = (CoordinatorLayout) findViewById(R.id.login_viewgroup);
+        loginContainer = (LinearLayout) findViewById(R.id.login_container);
+        usernameEditText = (EditText) findViewById(R.id.username_edit_text);
+        passwordEditText = (EditText) findViewById(R.id.password_edit_text);
+        loginButton = (Button) findViewById(R.id.login_button);
+        signUpTextView = (TextView) findViewById(R.id.sign_up_text_view);
+        loginProgressBar = (ProgressBar) findViewById(R.id.login_progress_bar);
 
         if (!preferences.getBoolean(getString(R.string.warning_preference_key), false)) {
             new AlertDialog.Builder(this)
@@ -110,36 +109,35 @@ public class LoginActivity extends AppCompatActivity {
             checkForLocationPermission();
         }
 
+        setupGameManager();
+
         // Launch MapActivity automatically if username and password are stored.
         final String usernameTemp = preferences.getString(getString(R.string.username_preference_key), null);
         final String passwordTemp = preferences.getString(getString(R.string.password_preference_key), null);
         if (usernameTemp != null && passwordTemp != null) {
-            // Username and password are stored in our preferences. It's now safe to launch the
-            // map activity.
-            launchMapActivity();
+            // Show the users a progress bar so they know something's up.
+            setLoginProgressBarVisible(true);
+            // Username and password are stored in our preferences. It's now safe to login and
+            // launch the map activity.
+            if (gameManager != null) {
+                gameManager.loginPTC(usernameTemp, passwordTemp);
+            }
         }
-
-        // Get our views from our layout.
-        loginViewGroup = (CoordinatorLayout) findViewById(R.id.login_viewgroup);
-        loginContainer = (LinearLayout) findViewById(R.id.login_container);
-        usernameEditText = (EditText) findViewById(R.id.username_edit_text);
-        passwordEditText = (EditText) findViewById(R.id.password_edit_text);
-        loginButton = (Button) findViewById(R.id.login_button);
-        signUpTextView = (TextView) findViewById(R.id.sign_up_text_view);
-        loginProgressBar = (ProgressBar) findViewById(R.id.login_progress_bar);
 
         // Set our login click listener
         loginButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                // Get our username and password from our EditTexts.
-                final String username = usernameEditText.getText().toString();
-                final String password = passwordEditText.getText().toString();
+                if (gameManager != null) {
+                    // Show our progress bar so users know something's up.
+                    setLoginProgressBarVisible(true);
 
-                // Instantiate our LoginTask object.
-                loginThread = new LoginTask();
-                // Start the login process.
-                loginThread.execute(username, password);
+                    // Get our username and password from our EditTexts.
+                    final String username = usernameEditText.getText().toString();
+                    final String password = passwordEditText.getText().toString();
+
+                    gameManager.loginPTC(username, password);
+                }
             }
         });
 
@@ -170,13 +168,18 @@ public class LoginActivity extends AppCompatActivity {
 
     /* Instance methods */
 
+    private void setupGameManager() {
+        gameManager = GameManager.getInstance(this);
+        gameManager.setOnLoginCompletedListener(this);
+    }
+
     private void setLoginProgressBarVisible(boolean visible) {
         if (visible) {
-            loginContainer.setVisibility(View.GONE);
-            loginProgressBar.setVisibility(View.VISIBLE);
+            if (loginContainer != null) loginContainer.setVisibility(View.GONE);
+            if (loginProgressBar != null) loginProgressBar.setVisibility(View.VISIBLE);
         } else {
-            loginContainer.setVisibility(View.VISIBLE);
-            loginProgressBar.setVisibility(View.GONE);
+            if (loginContainer != null) loginContainer.setVisibility(View.VISIBLE);
+            if (loginProgressBar != null) loginProgressBar.setVisibility(View.GONE);
         }
     }
 
@@ -192,7 +195,8 @@ public class LoginActivity extends AppCompatActivity {
                 .setAction("status", new View.OnClickListener() {
                     @Override
                     public void onClick(View view) {
-                        Intent upStatusIntent = new Intent(Intent.ACTION_VIEW, Uri.parse("http://ispokemongodownornot.com/"));
+                        Intent upStatusIntent = new Intent(Intent.ACTION_VIEW,
+                                Uri.parse("http://ispokemongodownornot.com/"));
                         startActivity(upStatusIntent);
                     }
                 }).show();
@@ -225,7 +229,9 @@ public class LoginActivity extends AppCompatActivity {
                         Manifest.permission.ACCESS_FINE_LOCATION)) {
                     new AlertDialog.Builder(this)
                             .setTitle("Location")
-                            .setMessage(getString(R.string.app_name) + " needs permission to access GPS location. You can still use this app without it, but you won't have access to any location features.")
+                            .setMessage(getString(R.string.app_name) + " needs permission to access GPS location. You" +
+                                    " can still use this app without it, but you won't have access " +
+                                    "to any location features.")
                             .setPositiveButton("OK", new DialogInterface.OnClickListener() {
                                 @Override
                                 public void onClick(DialogInterface dialogInterface, int i) {
@@ -240,71 +246,23 @@ public class LoginActivity extends AppCompatActivity {
         }
     }
 
-    public class LoginTask extends AsyncTask<String, Integer, Boolean> {
+    public void showSnackBar(String msg) {
+        Snackbar.make(loginViewGroup, msg, Snackbar.LENGTH_LONG).show();
+    }
 
-        private String username;
-        private String password;
-
-        /**
-         * Logs in and stores username and password.
-         *
-         * @param params Username and password, respectively. Should
-         *               have a length of two.
-         * @return Return state. True if login was successful; False
-         * if login failed.
-         */
-        @Override
-        protected Boolean doInBackground(final String... params) {
-            // Return if params length isn't two. Params needs to contain
-            // only username and password, respectively.
-            if (params.length != 2) {
-                return false;
-            }
-
-            username = params[0];
-            password = params[1];
-
-            // Next, we'll initiate the OkHttpClient.
-            http = new OkHttpClient.Builder().connectTimeout(20, TimeUnit.SECONDS).build();
-
-            // This is where things get real.
-            try {
-                go = new PokemonGo(new PtcCredentialProvider(http, username, password), http);
-                if (go.getAuthInfo().isInitialized()) {
-                    // Success!
-                    Snackbar.make(loginViewGroup, "Login successful!", Snackbar.LENGTH_LONG).show();
-                    launchMapActivity(); // Self explanatory
+    @Override
+    public void onLoginCompleted(final GameManager.LoginResult loginResult) {
+        Utils.debug(this, "Login completed in LoginActivity.");
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                if (loginResult.getResult() == GameManager.Result.SUCCESS) {
+                    launchMapActivity();
+                } else {
+                    setLoginProgressBarVisible(false);
+                    showSnackBar(loginResult.getMessage());
                 }
-            } catch (LoginFailedException e) {
-                // If the login failed because of invalid credentials, display a Snackbar.
-                Snackbar.make(loginViewGroup, "Incorrect username or password", Snackbar.LENGTH_LONG).show();
-                return false;
-            } catch (RemoteServerException e) {
-                // Also show a snackbar if the server is busy. This time with a nifty status checker.
-                showRemoteServerError("Login failed. Servers may be busy");
-                return false;
             }
-            return true;
-        }
-
-        @Override
-        protected void onPreExecute() {
-            // At the start of the login task, let's show the progress bar so users know something's
-            // going on.
-            setLoginProgressBarVisible(true);
-        }
-
-        @Override
-        protected void onPostExecute(Boolean result) {
-            setLoginProgressBarVisible(false);
-
-            // If login is successful, we will
-            if (result) {
-                SharedPreferences.Editor editor = preferences.edit();
-                editor.putString(getString(R.string.username_preference_key), username);
-                editor.putString(getString(R.string.password_preference_key), password);
-                editor.apply();
-            }
-        }
+        });
     }
 }
